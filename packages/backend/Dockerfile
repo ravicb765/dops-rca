@@ -1,7 +1,5 @@
-# packages/backend/Dockerfile
-# Stage 1 - Build
-FROM node:18-bookworm-slim AS build
-
+# Stage 1 - Create skeleton
+FROM node:20-bookworm-slim AS build
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && \
@@ -14,24 +12,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 WORKDIR /app
 COPY . .
 
+# Build the workspace to generate dist and skeleton
 RUN yarn install --frozen-lockfile && \
     yarn tsc && \
     yarn build:backend
 
-# Stage 2 - Runtime
-FROM node:18-bookworm-slim
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    sqlite3 \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
+# Stage 2 - Production Install
+FROM node:20-bookworm-slim AS production
 WORKDIR /app
 
-# Copy built application
+# Copy the built backend bundle and its production dependencies
+COPY --from=build /app/packages/backend/dist/skeleton.tar.gz .
+RUN tar xzf skeleton.tar.gz && rm skeleton.tar.gz
+
+# Install production dependencies only
+RUN yarn install --frozen-lockfile --production --network-timeout 600000
+
+# Copy the actual backend bundle
 COPY --from=build /app/packages/backend/dist/bundle.tar.gz .
 RUN tar xzf bundle.tar.gz && rm bundle.tar.gz
 
@@ -42,5 +39,8 @@ COPY app-config.production.yaml .
 ENV NODE_ENV=production
 
 EXPOSE 7007
+
+# Use non-root user
+USER node
 
 CMD ["node", "packages/backend", "--config", "app-config.production.yaml"]
