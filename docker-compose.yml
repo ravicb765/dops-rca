@@ -21,7 +21,7 @@ services:
   # PostgreSQL - Dual Database (Backstage + ZITADEL)
   # ==========================================
   postgres:
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     container_name: backstage-postgres
     ports:
       - "5432:5432"
