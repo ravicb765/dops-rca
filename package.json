@@ -1,0 +1,51 @@
+{
+  "name": "gitops-rca",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "dependencies": {
+    "@backstage/app-defaults": "^1.4.10",
+    "@backstage/backend-common": "^0.21.0",
+    "@backstage/backend-plugin-api": "^0.6.13",
+    "@backstage/catalog-model": "^1.4.4",
+    "@backstage/config": "^1.1.1",
+    "@backstage/errors": "^1.2.3",
+    "@backstage/plugin-auth-backend": "^0.22.0",
+    "@backstage/plugin-auth-node": "^0.4.5",
+    "@backstage/plugin-catalog-backend": "^1.21.0",
+    "@backstage/plugin-kubernetes-backend": "^0.18.0",
+    "@backstage/plugin-kubernetes": "^0.13.0",
+    "@backstage/plugin-permission-backend": "^0.6.0",
+    "@backstage/plugin-permission-node": "^0.7.0",
+    "@backstage/plugin-search-backend": "^1.5.0",
+    "@backstage/plugin-techdocs-backend": "^1.9.0",
+    "@node-saml/passport-saml": "^4.0.2",
+    "@roadiehq/backstage-plugin-ai-assistant-rag": "^0.1.0",
+    "@suxess-it/backstage-plugin-k8sgpt": "^0.3.0",
+    "@k-phoen/backstage-plugin-grafana": "^1.4.0",
+    "@parsable/backstage-plugin-logstream": "^1.2.0",
+    "@backstage/plugin-ldap-auth-backend": "^0.5.0",
+    "@backstage/plugin-microsoft-auth-backend": "^0.1.0",
+    "winston": "^3.11.0",
+    "winston-audit": "^1.0.3",
+    "kubernetes-client": "^10.0.0",
+    "lokijs": "^1.5.12",
+    "langchain": "^0.1.20",
+    "@langchain/openai": "^0.0.15",
+    "@langchain/community": "^0.0.25"
+  },
+  "devDependencies": {
+    "@backstage/cli": "^0.26.0",
+    "@types/node": "^18.19.0",
+    "typescript": "^5.3.3"
+  },
+  "scripts": {
+    "build": "backstage-cli repo build",
+    "build:backend": "backstage-cli backend:build",
+    "build:frontend": "backstage-cli app:build",
+    "lint": "backstage-cli repo lint",
+    "test": "backstage-cli repo test",
+    "k8sgpt:deploy": "helm upgrade --install k8sgpt k8sgpt/k8sgpt --namespace k8sgpt --create-namespace -f ./k8sgpt-values.yaml",
+    "loadtest": "artillery run ./loadtest-scenario.yml"
+  }
+}

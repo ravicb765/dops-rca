@@ -1,0 +1,469 @@
+# app-config.production.yaml
+# Production configuration for Backstage AIOps Platform
+
+app:
+  title: AIOps Platform
+  baseUrl: https://backstage.yourcompany.com
+  
+  # Support contact
+  support:
+    url: https://support.yourcompany.com
+    items:
+      - title: Documentation
+        icon: docs
+        links:
+          - url: https://docs.yourcompany.com/backstage
+            title: Platform Docs
+      - title: Support
+        icon: help
+        links:
+          - url: https://slack.yourcompany.com/backstage
+            title: Slack Channel
+
+organization:
+  name: gitops-rca
+
+backend:
+  baseUrl: https://backstage.yourcompany.com
+  listen:
+    port: 7007
+    host: 0.0.0.0
+  
+  cors:
+    origin: https://backstage.yourcompany.com
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+  
+  # Database configuration
+  database:
+    client: pg
+    connection:
+      host: ${POSTGRES_HOST}
+      port: ${POSTGRES_PORT}
+      user: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      database: ${POSTGRES_DB}
+      ssl:
+        require: true
+        rejectUnauthorized: true
+        ca: ${POSTGRES_CA_CERT}
+    # Connection pool
+    pool:
+      min: 5
+      max: 20
+      acquireTimeoutMillis: 60000
+      idleTimeoutMillis: 30000
+  
+  # Cache (Redis for production)
+  cache:
+    store: redis
+    connection: ${REDIS_URL}
+    useRedisSets: true
+
+  # Reading configuration from a URL
+  reading:
+    allow:
+      - host: github.com
+      - host: '*.github.com'
+      - host: gitlab.com
+      - host: '*.gitlab.com'
+
+# ==========================================
+# Authentication & Authorization
+# ==========================================
+auth:
+  environment: production
+  
+  # Session configuration
+  session:
+    secret: ${SESSION_SECRET}
+  
+  providers:
+    # Primary: ZITADEL OIDC
+    zitadel:
+      production:
+        clientId: ${ZITADEL_CLIENT_ID}
+        clientSecret: ${ZITADEL_CLIENT_SECRET}
+        metadataUrl: ${ZITADEL_ISSUER}/.well-known/openid-configuration
+        callbackUrl: https://backstage.yourcompany.com/api/auth/zitadel/handler/frame
+        scope: 'openid profile email'
+        prompt: auto
+        
+        # Group synchronization config
+        roleClaimPath: "urn:zitadel:iam:org:project:roles"
+        teamPrefix: "team-"
+        groupDomain: "default"
+        enableDebugLogging: false
+        
+        signIn:
+          resolvers:
+            - resolver: zitadelGroupSyncResolver
+    
+    # Fallback: SAML for corporate IdP
+    saml:
+      production:
+        entryPoint: ${AUTH_SAML_ENTRYPOINT}
+        issuer: ${AUTH_SAML_ISSUER}
+        cert: ${AUTH_SAML_CERT}
+        signatureAlgorithm: 'sha256'
+        digestAlgorithm: 'sha256'
+        
+        # Group extraction
+        groupAttribute: 'http://schemas.xmlsoap.org/claims/Group'
+        
+        # SAML endpoints
+        callbackUrl: https://backstage.yourcompany.com/api/auth/saml/handler/frame
+        logoutUrl: https://backstage.yourcompany.com/api/auth/saml/logout
+        
+        signIn:
+          resolvers:
+            - resolver: emailMatchingUserEntityProfileEmail
+    
+    # Azure AD (optional)
+    microsoft:
+      production:
+        tenantId: ${AZURE_TENANT_ID}
+        clientId: ${AZURE_CLIENT_ID}
+        clientSecret: ${AZURE_CLIENT_SECRET}
+        domainHint: ${AZURE_DOMAIN_HINT}
+        
+        signIn:
+          resolvers:
+            - resolver: emailMatchingUserEntityProfileEmail
+
+# ==========================================
+# Permission System
+# ==========================================
+permission:
+  enabled: true
+  
+  # Kubernetes namespace isolation
+  kubernetes:
+    sharedNamespaces:
+      - monitoring
+      - platform-tools
+      - flux-system
+      - kube-system
+    enableAuditLogging: true
+    strictMode: true
+
+# ==========================================
+# Catalog Configuration
+# ==========================================
+catalog:
+  # Refresh entities every 5 minutes
+  processingInterval: { minutes: 5 }
+  
+  # Entity providers
+  providers:
+    # GitHub discovery
+    github:
+      yourOrg:
+        organization: 'your-github-org'
+        catalogPath: '/catalog-info.yaml'
+        filters:
+          branch: 'main'
+          repository: '.*'
+        schedule:
+          frequency: { minutes: 30 }
+          timeout: { minutes: 3 }
+    
+    # GitLab discovery
+    gitlab:
+      yourGroup:
+        host: gitlab.com
+        group: 'your-gitlab-group'
+        entityFilename: 'catalog-info.yaml'
+        projectPattern: '[\s\S]*'
+        schedule:
+          frequency: { minutes: 30 }
+          timeout: { minutes: 3 }
+  
+  # Static locations
+  locations:
+    - type: file
+      target: ../../catalog/all.yaml
+    
+    # Organization structure
+    - type: url
+      target: https://github.com/your-org/backstage-entities/blob/main/org.yaml
+      rules:
+        - allow: [User, Group]
+    
+    # Component templates
+    - type: url
+      target: https://github.com/your-org/backstage-templates/blob/main/templates/all.yaml
+      rules:
+        - allow: [Template]
+
+# ==========================================
+# Kubernetes Integration
+# ==========================================
+kubernetes:
+  serviceLocatorMethod:
+    type: 'multiTenant'
+  
+  customResources:
+    - group: 'argoproj.io'
+      apiVersion: 'v1alpha1'
+      plural: 'rollouts'
+    - group: 'cert-manager.io'
+      apiVersion: 'v1'
+      plural: 'certificates'
+  
+  clusterLocatorMethods:
+    # Production EKS (AWS)
+    - type: 'config'
+      clusters:
+        - name: 'prod-eks-us-east-1'
+          url: ${EKS_US_EAST_1_URL}
+          authProvider: 'aws'
+          skipTLSVerify: false
+          caData: ${EKS_US_EAST_1_CA}
+          awsAssumeRole: ${EKS_US_EAST_1_ROLE_ARN}
+          skipNamespaces:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+        
+        - name: 'prod-eks-eu-west-1'
+          url: ${EKS_EU_WEST_1_URL}
+          authProvider: 'aws'
+          skipTLSVerify: false
+          caData: ${EKS_EU_WEST_1_CA}
+          awsAssumeRole: ${EKS_EU_WEST_1_ROLE_ARN}
+    
+    # AKS (Azure)
+    - type: 'config'
+      clusters:
+        - name: 'prod-aks-west-europe'
+          url: ${AKS_WEST_EUROPE_URL}
+          authProvider: 'azure'
+          skipTLSVerify: false
+          caData: ${AKS_WEST_EUROPE_CA}
+          azureClientId: ${AZURE_CLIENT_ID}
+          azureClientSecret: ${AZURE_CLIENT_SECRET}
+          azureTenantId: ${AZURE_TENANT_ID}
+    
+    # GKE (Google Cloud)
+    - type: 'config'
+      clusters:
+        - name: 'prod-gke-us-central1'
+          url: ${GKE_US_CENTRAL1_URL}
+          authProvider: 'google'
+          skipTLSVerify: false
+          caData: ${GKE_US_CENTRAL1_CA}
+    
+    # On-premise Kubernetes
+    - type: 'config'
+      clusters:
+        - name: 'onprem-datacenter-1'
+          url: ${ONPREM_K8S_URL}
+          authProvider: 'serviceAccount'
+          skipTLSVerify: false
+          caData: ${ONPREM_K8S_CA}
+          serviceAccountToken: ${ONPREM_K8S_TOKEN}
+
+# ==========================================
+# VictoriaMetrics / VictoriaLogs
+# ==========================================
+victoriametrics:
+  # Metrics endpoint
+  metricsUrl: ${VICTORIAMETRICS_METRICS_URL}
+  
+  # Logs endpoint (VictoriaLogs)
+  logsUrl: ${VICTORIAMETRICS_LOGS_URL}
+  queryPath: /select/logsql/query
+  insertPath: /insert/jsonline
+  
+  # Timeout configuration
+  timeout: 30000
+  
+  # Predefined queries for RCA
+  predefinedQueries:
+    errors: '{namespace="%{namespace}"} | json | level="error" or level="critical"'
+    timeouts: '{namespace="%{namespace}"} |~ "timeout|deadline"'
+    oom: '{namespace="%{namespace}"} |~ "OOMKilled|OutOfMemory"'
+    crashes: '{namespace="%{namespace}"} |~ "panic|crash|fatal"'
+    connections: '{namespace="%{namespace}"} |~ "connection refused|connection reset"'
+
+# ==========================================
+# k8sgpt Configuration
+# ==========================================
+k8sgpt:
+  enabled: true
+  apiUrl: http://k8sgpt-operator.k8sgpt.svc.cluster.local:8080
+  defaultBackend: 'openai'
+  defaultModel: 'gpt-4o'
+  anonymize: true  # CRITICAL for PII compliance
+  
+  # Analysis filters
+  filters:
+    - 'Ingress'
+    - 'Service'
+    - 'Pod'
+    - 'Deployment'
+    - 'StatefulSet'
+    - 'ReplicaSet'
+    - 'PersistentVolumeClaim'
+    - 'NetworkPolicy'
+
+# ==========================================
+# AI Assistant / RAG Configuration
+# ==========================================
+aiAssistant:
+  rag:
+    enabled: true
+    
+    # Vector store
+    vectorStore: 'chroma'
+    vectorStoreUrl: ${CHROMA_URL}
+    
+    # LLM configuration
+    llmProvider: 'openai'
+    llmModel: 'gpt-4-turbo'
+    llmApiKey: ${OPENAI_API_KEY}
+    
+    # Embedding model
+    embeddingModel: 'text-embedding-3-small'
+    
+    # Knowledge sources
+    sources:
+      - type: 'catalog'
+        description: 'Backstage catalog entities'
+      
+      - type: 'techdocs'
+        description: 'Technical documentation'
+      
+      - type: 'grafana'
+        url: ${GRAFANA_URL}
+        apiKey: ${GRAFANA_API_KEY}
+        description: 'Incident dashboards'
+      
+      - type: 'victorialogs'
+        url: ${VICTORIAMETRICS_LOGS_URL}
+        description: 'Application logs'
+    
+    # Chunking configuration
+    chunkSize: 1000
+    chunkOverlap: 200
+    
+    # Rate limiting
+    maxRequestsPerMinute: 10
+
+# ==========================================
+# Scaffolder (Templates)
+# ==========================================
+scaffolder:
+  defaultAuthor:
+    name: Backstage System
+    email: backstage@yourcompany.com
+  
+  defaultCommitMessage: 'Initial commit from Backstage'
+
+# ==========================================
+# TechDocs
+# ==========================================
+techdocs:
+  builder: 'external'
+  generator:
+    runIn: 'docker'
+  
+  publisher:
+    type: 's3'
+    s3:
+      bucketName: ${TECHDOCS_S3_BUCKET}
+      region: ${AWS_REGION}
+      credentials:
+        accessKeyId: ${AWS_ACCESS_KEY_ID}
+        secretAccessKey: ${AWS_SECRET_ACCESS_KEY}
+
+# ==========================================
+# Proxy Endpoints
+# ==========================================
+proxy:
+  endpoints:
+    '/victoriametrics':
+      target: ${VICTORIAMETRICS_METRICS_URL}
+      changeOrigin: true
+      headers:
+        Authorization: 'Bearer ${VICTORIAMETRICS_API_KEY}'
+    
+    '/victorialogs':
+      target: ${VICTORIAMETRICS_LOGS_URL}
+      changeOrigin: true
+      headers:
+        Authorization: 'Bearer ${VICTORIAMETRICS_API_KEY}'
+    
+    '/grafana':
+      target: ${GRAFANA_URL}
+      changeOrigin: true
+      headers:
+        Authorization: 'Bearer ${GRAFANA_API_KEY}'
+
+# ==========================================
+# Integrations
+# ==========================================
+integrations:
+  github:
+    - host: github.com
+      apps:
+        - appId: ${GITHUB_APP_ID}
+          clientId: ${GITHUB_CLIENT_ID}
+          clientSecret: ${GITHUB_CLIENT_SECRET}
+          webhookSecret: ${GITHUB_WEBHOOK_SECRET}
+          privateKey: ${GITHUB_PRIVATE_KEY}
+  
+  gitlab:
+    - host: gitlab.com
+      token: ${GITLAB_TOKEN}
+      apiBaseUrl: https://gitlab.com/api/v4
+  
+  azure:
+    - host: dev.azure.com
+      credentials:
+        - organizations:
+            - your-org
+          clientId: ${AZURE_CLIENT_ID}
+          clientSecret: ${AZURE_CLIENT_SECRET}
+          tenantId: ${AZURE_TENANT_ID}
+
+# ==========================================
+# Logging & Monitoring
+# ==========================================
+logging:
+  level: info
+  format: json
+  
+  # Winston transports
+  transports:
+    - type: 'file'
+      level: 'audit'
+      filename: '/var/log/backstage/audit.log'
+      maxsize: 104857600  # 100MB
+      maxFiles: 10
+      tailable: true
+    
+    - type: 'console'
+      level: 'info'
+      format: 'json'
+    
+    - type: 'http'
+      level: 'error'
+      host: ${LOGGING_AGGREGATOR_HOST}
+      path: '/ingest/backstage'
+      headers:
+        Authorization: 'Bearer ${LOGGING_API_KEY}'
+
+# ==========================================
+# Feature Flags
+# ==========================================
+featureFlags:
+  kubernetes:
+    enabled: true
+  rca:
+    enabled: true
+  aiAssistant:
+    enabled: true
+  techdocs:
+    enabled: true
