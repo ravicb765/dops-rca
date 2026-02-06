@@ -3,7 +3,7 @@ import { AuditLogger } from 'winston-audit';
 
 export class KubernetesAuditLogger {
   private auditLogger: AuditLogger;
-  
+
   constructor(private baseLogger: WinstonLogger) {
     this.auditLogger = new AuditLogger({
       logger: baseLogger,
@@ -11,20 +11,21 @@ export class KubernetesAuditLogger {
       hooks: {
         // Redact sensitive fields in Kubernetes API requests
         beforeLog: (entry) => {
-          if (entry.action?.includes('kubernetes')) {
-            if (entry.metadata?.request?.headers?.authorization) {
-              entry.metadata.request.headers.authorization = '[REDACTED]';
-            }
-            if (entry.metadata?.response?.body) {
-              entry.metadata.response.body = this.redactSensitiveData(entry.metadata.response.body);
-            }
+          if (entry.metadata?.request?.headers?.authorization) {
+            entry.metadata.request.headers.authorization = '[REDACTED]';
+          }
+          if (entry.metadata?.request?.body) {
+            entry.metadata.request.body = this.redactSensitiveData(entry.metadata.request.body);
+          }
+          if (entry.metadata?.response?.body) {
+            entry.metadata.response.body = this.redactSensitiveData(entry.metadata.response.body);
           }
           return entry;
         }
       }
     });
   }
-  
+
   logKubernetesCall({
     userId,
     cluster,
@@ -57,12 +58,12 @@ export class KubernetesAuditLogger {
       timestamp: new Date().toISOString()
     });
   }
-  
+
   private redactSensitiveData(obj: any): any {
     if (typeof obj !== 'object' || obj === null) return obj;
-    const redacted = { ...obj };
+    const redacted = Array.isArray(obj) ? [...obj] : { ...obj };
     for (const key of Object.keys(redacted)) {
-      if (/(token|password|secret|cert|key)/i.test(key)) {
+      if (/(token|password|secret|cert|key|cookie|auth)/i.test(key)) {
         redacted[key] = '[REDACTED]';
       } else if (typeof redacted[key] === 'object') {
         redacted[key] = this.redactSensitiveData(redacted[key]);

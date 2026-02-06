@@ -43,7 +43,7 @@ export class K8sNamespacePolicy implements PermissionPolicy {
     private readonly identity: IdentityApi,
     private readonly config: K8sNamespacePolicyConfig,
     private readonly logger: Logger,
-  ) {}
+  ) { }
 
   async handle(request: PolicyQuery): Promise<PolicyDecision> {
     const permission = request.permission;
@@ -56,17 +56,17 @@ export class K8sNamespacePolicy implements PermissionPolicy {
     try {
       // Extract user identity and groups
       const userGroups = await this.getUserGroups(request);
-      
+
       // Get the entity being accessed
       const entity = await this.getEntity(request);
-      
+
       if (!entity) {
         return this.denyAccess(request, 'Entity not found');
       }
 
       // Extract namespace from entity
       const namespace = this.extractNamespace(entity);
-      
+
       if (!namespace) {
         if (this.config.strictMode) {
           return this.denyAccess(
@@ -120,7 +120,7 @@ export class K8sNamespacePolicy implements PermissionPolicy {
         stack: error.stack,
         permission: permission.name,
       });
-      
+
       // Fail closed - deny access on errors
       return { result: AuthorizeResult.DENY };
     }
@@ -150,7 +150,7 @@ export class K8sNamespacePolicy implements PermissionPolicy {
 
   private async getEntity(request: PolicyQuery): Promise<Entity | undefined> {
     const resourceRef = request.resource?.resourceRef;
-    
+
     if (!resourceRef) {
       return undefined;
     }
@@ -182,7 +182,7 @@ export class K8sNamespacePolicy implements PermissionPolicy {
     userGroups: string[]
   ): boolean {
     const expectedOwner = this.getExpectedOwner(namespace);
-    
+
     // Check if user is in the owning group
     return userGroups.includes(expectedOwner);
   }
@@ -190,22 +190,20 @@ export class K8sNamespacePolicy implements PermissionPolicy {
   private getExpectedOwner(namespace: string): string {
     // Extract team from namespace: team-a-prod → team-a
     const parts = namespace.split('-');
-    
+
     if (parts.length < 2) {
-      this.logger.warn('Invalid namespace format', { namespace });
       return `group:default/${namespace}`;
     }
 
-    // Handle multi-part team names: platform-engineering-prod → platform-engineering
-    const environment = parts[parts.length - 1];
-    const validEnvironments = ['prod', 'staging', 'dev', 'test'];
-    
+    const environmentSuffixes = ['prod', 'staging', 'dev', 'test', 'qa', 'sandbox'];
+    const lastPart = parts[parts.length - 1].toLowerCase();
+
     let teamName: string;
-    if (validEnvironments.includes(environment)) {
-      // Last part is environment, rest is team name
+    if (environmentSuffixes.includes(lastPart)) {
+      // Last part is environment (e.g., team-a-prod → team-a)
       teamName = parts.slice(0, -1).join('-');
     } else {
-      // No environment suffix, use entire namespace as team
+      // No environment suffix detected, use entire namespace
       teamName = namespace;
     }
 

@@ -2,7 +2,13 @@
 import { createTemplateAction } from '@backstage/plugin-scaffolder-backend';
 import { Logger } from 'winston';
 import { Config } from '@backstage/config';
-import { VictoriaLogsClient } from '../../victorialogs/lib/logs-client';
+import { VictoriaLogsClient } from './victorialogs-client';
+import { ResilientLLMClient } from './resilient-llm-client';
+import { CatalogApi } from '@backstage/catalog-client';
+import { Entity } from '@backstage/catalog-model';
+import * as fs from 'fs';
+import * as path from 'path';
+import { execSync } from 'child_process';
 
 interface RcaContext {
   namespace: string;
@@ -35,10 +41,12 @@ interface RcaResult {
 export function createRcaAnalyzeAction(options: {
   logger: Logger;
   config: Config;
+  catalogApi: CatalogApi;
   victoriaLogs: VictoriaLogsClient;
   k8sgptClient?: any;
+  llmClient?: ResilientLLMClient;
 }) {
-  const { logger, config, victoriaLogs, k8sgptClient } = options;
+  const { logger, config, catalogApi, victoriaLogs, k8sgptClient, llmClient } = options;
 
   return createTemplateAction<{
     entityRef: string;
@@ -48,7 +56,7 @@ export function createRcaAnalyzeAction(options: {
   }>({
     id: 'rca:analyze',
     description: 'Performs AI-powered root cause analysis',
-    
+
     schema: {
       input: {
         type: 'object',
@@ -75,7 +83,7 @@ export function createRcaAnalyzeAction(options: {
           },
         },
       },
-      
+
       output: {
         type: 'object',
         properties: {
@@ -107,7 +115,10 @@ export function createRcaAnalyzeAction(options: {
 
       try {
         // 1. Fetch entity metadata
-        const entity = await fetchEntity(entityRef, ctx);
+        const entity = await fetchEntity(entityRef, catalogApi);
+        if (!entity) {
+          throw new Error(`Entity not found: ${entityRef}`);
+        }
         const namespace = extractNamespace(entity);
         const cluster = extractCluster(entity);
 
@@ -121,28 +132,28 @@ export function createRcaAnalyzeAction(options: {
             10000,
             'Kubernetes API timeout'
           ),
-          
+
           // Log analysis
           includeLogs
             ? timeout(
-                victoriaLogs.fetchLogAnomalies(namespace, timeRange),
-                15000,
-                'VictoriaLogs timeout'
-              )
+              victoriaLogs.fetchLogAnomalies(namespace, timeRange),
+              15000,
+              'VictoriaLogs timeout'
+            )
             : Promise.resolve(null),
-          
+
           // k8sgpt analysis (optional)
           k8sgptClient
             ? timeout(
-                k8sgptClient.analyze({ namespace, cluster }),
-                20000,
-                'k8sgpt timeout'
-              ).catch(err => {
-                ctx.logger.warn('k8sgpt analysis failed, continuing without it', {
-                  error: err.message,
-                });
-                return null;
-              })
+              k8sgptClient.analyze({ namespace, cluster }),
+              20000,
+              'k8sgpt timeout'
+            ).catch(err => {
+              ctx.logger.warn('k8sgpt analysis failed, continuing without it', {
+                error: err.message,
+              });
+              return null;
+            })
             : Promise.resolve(null),
         ]);
 
@@ -167,6 +178,7 @@ export function createRcaAnalyzeAction(options: {
           k8sContext,
           logAnomalies,
           k8sgptAnalysis,
+          llmClient,
           timeRange,
           logger: ctx.logger,
         });
@@ -243,23 +255,8 @@ function timeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T
 /**
  * Fetch entity from catalog
  */
-async function fetchEntity(entityRef: string, ctx: any): Promise<any> {
-  // Implementation would use CatalogApi
-  // Placeholder for demonstration
-  return {
-    metadata: {
-      name: 'payment-service',
-      namespace: 'default',
-      annotations: {
-        'backstage.io/kubernetes-namespace': 'team-a-prod',
-        'backstage.io/kubernetes-cluster': 'prod-eks-us',
-      },
-    },
-    spec: {
-      type: 'service',
-      lifecycle: 'production',
-    },
-  };
+async function fetchEntity(entityRef: string, catalogApi: CatalogApi): Promise<Entity | undefined> {
+  return await catalogApi.getEntityByRef(entityRef);
 }
 
 /**
@@ -306,14 +303,15 @@ async function fetchK8sContext(
  * Generate RCA analysis from collected data
  */
 async function generateRCA(options: {
-  entity: any;
+  entity: Entity;
   k8sContext: RcaContext;
   logAnomalies: any;
   k8sgptAnalysis: any;
+  llmClient?: ResilientLLMClient;
   timeRange: string;
-  logger: Logger;
+  logger: any;
 }): Promise<RcaResult> {
-  const { k8sContext, logAnomalies, k8sgptAnalysis, logger } = options;
+  const { k8sContext, logAnomalies, k8sgptAnalysis, llmClient, logger } = options;
 
   // Build analysis factors
   const factors: string[] = [];
@@ -354,9 +352,24 @@ async function generateRCA(options: {
   }
 
   // Build summary
-  const summary = factors.length > 0
+  let summary = factors.length > 0
     ? `Analysis identified ${factors.length} contributing factors. ${actions.length} recommended actions available.`
     : 'No significant issues detected. System appears healthy.';
+
+  // Enhance summary with LLM if available
+  if (llmClient && factors.length > 0) {
+    try {
+      const prompt = `Perform root cause analysis for service ${options.entity.metadata.name}. 
+        Factors: ${factors.join(', ')}. 
+        Logs: ${JSON.stringify(logAnomalies?.patterns || [])}.
+        Provide a concise 2-sentence summary and 3 action items.`;
+
+      const aiSummary = await llmClient.query(prompt);
+      summary = aiSummary;
+    } catch (err: any) {
+      logger.warn('LLM summary generation failed', { error: err.message });
+    }
+  }
 
   // Normalize confidence (0-100)
   confidence = Math.min(confidence, 100);
@@ -383,19 +396,37 @@ async function commitRCAToGit(options: {
   rcaResult: RcaResult;
   author: string;
   config: Config;
-  logger: Logger;
+  logger: any;
 }): Promise<string> {
   const { entityRef, rcaResult, author, logger } = options;
 
   // Format RCA as Markdown
   const markdown = formatRCAMarkdown(entityRef, rcaResult, author);
 
-  // Commit to Git (implementation would use Git client)
-  const filename = `rca-${Date.now()}.md`;
-  logger.info('Committing RCA to Git', { filename });
+  const timestamp = Date.now();
+  const filename = `rca-${timestamp}.md`;
+  const reportsDir = path.resolve(process.cwd(), 'reports', 'rca');
 
-  // Placeholder - would use actual Git operations
-  return `abc123`; // Git commit SHA
+  try {
+    if (!fs.existsSync(reportsDir)) {
+      fs.mkdirSync(reportsDir, { recursive: true });
+    }
+
+    const reportPath = path.join(reportsDir, filename);
+    fs.writeFileSync(reportPath, markdown);
+
+    logger.info('Committing RCA to Git', { filename });
+
+    // Git commands
+    execSync('git add reports/rca/', { stdio: 'ignore' });
+    execSync(`git commit -m "docs: add RCA report for ${entityRef} at ${timestamp}"`, { stdio: 'ignore' });
+    const commitSha = execSync('git rev-parse HEAD').toString().trim();
+
+    return commitSha;
+  } catch (error: any) {
+    logger.error('Failed to commit RCA to Git', { error: error.message });
+    return 'manual-save-' + timestamp;
+  }
 }
 
 /**
