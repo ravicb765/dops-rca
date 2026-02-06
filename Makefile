@@ -99,7 +99,8 @@ clean: ## Remove all containers and volumes
 .PHONY: install
 install: ## Install dependencies
 	@echo "$(GREEN)📦 Installing dependencies...$(NC)"
-	@yarn install --frozen-lockfile
+	@yarn install --immutable
+	#@yarn install --immutable
 	@echo "$(GREEN)✓ Dependencies installed$(NC)"
 
 .PHONY: build
