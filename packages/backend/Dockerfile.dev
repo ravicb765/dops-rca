@@ -1,0 +1,41 @@
+# packages/backend/Dockerfile.dev
+FROM node:18-bookworm-slim
+
+# Install sqlite3 and python (needed for some backstage dependencies)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    sqlite3 \
+    python3 \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up workdir
+WORKDIR /app
+
+# Add host user to container (to match GID/UID if provided)
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+RUN groupmod -g ${GROUP_ID} node || true && \
+    usermod -u ${USER_ID} -g ${GROUP_ID} node || true
+
+# Set ownership
+RUN chown node:node /app
+
+USER node
+
+# Copy package essentials for caching
+COPY --chown=node:node package.json yarn.lock ./
+COPY --chown=node:node packages/backend/package.json ./packages/backend/
+
+# Install dependencies (skipping if node_modules exists via volume)
+RUN yarn install --frozen-lockfile
+
+# The rest of the source will be mounted via volumes in docker-compose
+# But we provide the entrypoint
+EXPOSE 7007
+
+# Default command for dev
+CMD ["yarn", "workspace", "backend", "start"]

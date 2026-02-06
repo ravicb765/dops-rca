@@ -1,0 +1,11 @@
+.git
+node_modules
+packages/*/node_modules
+dist
+*.tar.gz
+artifacts
+brain
+.env
+.zitadel-creds
+logs
+temp

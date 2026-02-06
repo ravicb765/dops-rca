@@ -2,8 +2,8 @@
 import { createTemplateAction } from '@backstage/plugin-scaffolder-backend';
 import { Logger } from 'winston';
 import { Config } from '@backstage/config';
-import { VictoriaLogsClient } from './victorialogs-client';
-import { ResilientLLMClient } from './resilient-llm-client';
+import { VictoriaLogsClient } from '../../rca/lib/victorialogs-client';
+import { ResilientLLMClient } from '../../rca/lib/resilient-llm-client';
 import { CatalogApi } from '@backstage/catalog-client';
 import { Entity } from '@backstage/catalog-model';
 import * as fs from 'fs';
