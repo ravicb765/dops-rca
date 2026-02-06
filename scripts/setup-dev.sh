@@ -59,13 +59,9 @@ success "Prerequisites check passed"
 # ==========================================
 # 2. Install Dependencies
 # ==========================================
-if [ ! -d "node_modules" ]; then
-    log "Installing Node.js dependencies..."
-    yarn install --frozen-lockfile
-    success "Dependencies installed"
-else
-    log "Dependencies already installed (skipping)"
-fi
+log "Installing Node.js dependencies..."
+yarn install --immutable
+success "Dependencies installed"
 
 # ==========================================
 # 3. Create Required Directories
