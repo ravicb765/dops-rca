@@ -1,4 +1,3 @@
-version: '3.8'
 
 # Shared logging configuration
 x-logging: &logging
@@ -41,106 +40,25 @@ services:
       - backstage-network
 
   # ==========================================
-  # ZITADEL - Identity Provider (OIDC)
-  # ==========================================
-  zitadel:
-    image: ghcr.io/zitadel/zitadel:v2.47.8
-    container_name: backstage-zitadel
-    ports:
-      - "8080:8080"
-    command: >
-      start-from-init
-      --masterkey="DevMasterKeyMustBe32Chars!!"
-      --tlsMode=disabled
-      --devMode=true
-      --firstUserOrg="backstage-dev"
-      --firstUserName="zitadel-admin"
-      --firstUserEmail="admin@backstage-dev.local"
-      --firstUserPassword="SuperSecureDevPass123!"
-    environment:
-      # Database connection
-      ZITADEL_DATABASE_POSTGRES_HOST: postgres
-      ZITADEL_DATABASE_POSTGRES_PORT: 5432
-      ZITADEL_DATABASE_POSTGRES_USER: postgres
-      ZITADEL_DATABASE_POSTGRES_PASSWORD: postgres
-      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
-      ZITADEL_DATABASE_POSTGRES_SSL_MODE: disable
-      
-      # Logging
-      ZITADEL_LOG_LEVEL: info
-      ZITADEL_LOG_FORMAT: json
-      
-      # Development mode
-      ZITADEL_DEV_MODE: "true"
-      ZITADEL_EXTERNALSECURE: "false"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:8080/debug/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
-    <<: *logging
-    networks:
-      - backstage-network
-
-  # ==========================================
-  # ZITADEL Initialization - OIDC App Setup
-  # ==========================================
-  zitadel-init:
-    image: curlimages/curl:8.5.0
-    container_name: backstage-zitadel-init
-    depends_on:
-      zitadel:
-        condition: service_healthy
-    volumes:
-      - ./scripts:/scripts:ro
-      - ./:/app
-    environment:
-      ZITADEL_URL: http://zitadel:8080
-      ZITADEL_ADMIN_USER: zitadel-admin
-      ZITADEL_ADMIN_PASS: SuperSecureDevPass123!
-      ZITADEL_ORG: backstage-dev
-      ZITADEL_PROJECT: backstage-local
-      ZITADEL_APP: backstage-oidc
-    command: >
-      sh -c "
-        apk add --no-cache jq bash &&
-        chmod +x /scripts/zitadel-init.sh &&
-        /scripts/zitadel-init.sh
-      "
-    <<: *logging
-    networks:
-      - backstage-network
-
-  # ==========================================
   # VictoriaMetrics - Unified Metrics + Logs
   # ==========================================
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.96.0
+    image: victoriametrics/victoria-metrics:v1.135.0
     container_name: backstage-victoriametrics
     ports:
       - "8428:8428"  # Metrics HTTP API
-      - "9428:9428"  # Logs HTTP API
       - "2003:2003"  # Graphite
     command:
       # Metrics configuration
       - "-httpListenAddr=:8428"
       - "-retentionPeriod=7d"
       - "-selfScrapeInterval=10s"
-      
-      # Logs configuration (VictoriaLogs)
-      - "-vlPublicUrl=http://victoriametrics:9428"
-      - "-vlStorageDataPath=/storage/logs"
-      - "-vlRetentionPeriod=7d"
-      - "-vlMaxDailySeries=100000"
-      - "-vlMaxHourlySeries=10000"
-      
+      - "--storageDataPath=/storage"
+          
       # Performance
-      - "-search.maxConcurrentRequests=12"
+      - "-search.maxConcurrentRequests=1"
       - "-insert.maxQueueDuration=5m"
+      - "-search.maxUniqueTimeseries=2028736"
       
       # Logging
       - "-loggerFormat=json"
@@ -154,6 +72,23 @@ services:
       retries: 5
       start_period: 10s
     <<: *logging
+    networks:
+      - backstage-network
+
+  # ==========================================
+  # VictoriaLogs - Log Management
+  # ==========================================
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.45.0
+    container_name: backstage-victorialogs
+    ports:
+      - "9428:9428"
+    command:
+      - "-httpListenAddr=:9428"
+      - "-storageDataPath=/storage"
+      - "-loggerFormat=json"
+    volumes:
+      - victorialogs-data:/storage
     networks:
       - backstage-network
 
@@ -188,7 +123,7 @@ services:
   backstage:
     build:
       context: .
-      dockerfile: packages/backend/Dockerfile.dev
+      dockerfile: packages/backend/Dockerfile.dev.corepack
       args:
         USER_ID: ${UID:-1000}
         GROUP_ID: ${GID:-1000}
@@ -199,13 +134,17 @@ services:
     volumes:
       # Source code (for hot-reload in dev)
       - .:/app:cached
-      - /app/node_modules
       
       # Kubernetes config (optional)
       - ~/.kube:/home/node/.kube:ro
       
       # AWS credentials (optional)
       - ~/.aws:/home/node/.aws:ro
+    command: >
+      sh -c "
+        YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install &&
+        yarn workspace backend start
+      "
     environment:
       # Node environment
       NODE_ENV: development
@@ -214,18 +153,6 @@ services:
       # Backstage URLs
       APP_CONFIG_app_baseUrl: http://localhost:3000
       APP_CONFIG_backend_baseUrl: http://localhost:7007
-      
-      # Authentication
-      APP_CONFIG_auth_environment: development
-      APP_CONFIG_auth_providers_zitadel_development_clientId: ${ZITADEL_CLIENT_ID:-local-backstage-dev}
-      APP_CONFIG_auth_providers_zitadel_development_clientSecret: ${ZITADEL_CLIENT_SECRET:-dev-secret-123}
-      APP_CONFIG_auth_providers_zitadel_development_baseUrl: http://host.docker.internal:8080
-      APP_CONFIG_auth_providers_zitadel_development_callbackUrl: http://localhost:3000/api/auth/zitadel/handler/frame
-      
-      # Group synchronization
-      APP_CONFIG_auth_providers_zitadel_roleClaimPath: "urn:zitadel:iam:org:project:roles"
-      APP_CONFIG_auth_providers_zitadel_teamPrefix: "team-"
-      APP_CONFIG_auth_providers_zitadel_groupDomain: "default"
       
       # Kubernetes plugin
       APP_CONFIG_kubernetes_serviceLocatorMethod_type: multiTenant
@@ -237,7 +164,7 @@ services:
       
       # VictoriaMetrics/VictoriaLogs
       APP_CONFIG_victoriametrics_metricsUrl: http://victoriametrics:8428
-      APP_CONFIG_victoriametrics_logsUrl: http://victoriametrics:9428
+      APP_CONFIG_victoriametrics_logsUrl: http://victorialogs:9428
       APP_CONFIG_victoriametrics_queryPath: /select/logsql/query
       APP_CONFIG_victoriametrics_insertPath: /insert/jsonline
       
@@ -262,10 +189,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      zitadel-init:
-        condition: service_completed_successfully
       victoriametrics:
-        condition: service_healthy
+        condition: service_started
+      victorialogs:
+        condition: service_started
       mock-k8s:
         condition: service_healthy
     healthcheck:
@@ -285,6 +212,8 @@ volumes:
   postgres-data:
     driver: local
   victoriametrics-data:
+    driver: local
+  victorialogs-data:
     driver: local
 
 # ==========================================
