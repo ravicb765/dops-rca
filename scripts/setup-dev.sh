@@ -60,14 +60,65 @@ success "Prerequisites check passed"
 # 2. Install Dependencies
 # ==========================================
 log "Installing Node.js dependencies..."
-yarn install --immutable
+
+# Fix invalid dependency version causing YN0082
+log "Fixing package.json dependencies..."
+node -e '
+  const fs = require("fs");
+  const files = ["package.json", "packages/backend/package.json"];
+  files.forEach(f => {
+    if (fs.existsSync(f)) {
+      try {
+        let content = fs.readFileSync(f, "utf8");
+        // Fix trailing commas from previous sed runs
+        content = content.replace(/,(\s*})/g, "$1");
+        const pkg = JSON.parse(content);
+        if (f.includes("packages/backend/package.json")) {
+          pkg.backstage = pkg.backstage || {};
+          pkg.backstage.role = "backend";
+          if (!pkg.dependencies["@backstage/backend-defaults"]) {
+            pkg.dependencies["@backstage/backend-defaults"] = "^0.2.0";
+          }
+          if (!pkg.dependencies["@backstage/plugin-proxy-backend"]) {
+            pkg.dependencies["@backstage/plugin-proxy-backend"] = "^0.4.14";
+          }
+          if (!pkg.dependencies["@backstage/plugin-kubernetes-backend"]) {
+            pkg.dependencies["@backstage/plugin-kubernetes-backend"] = "^0.17.0";
+          }
+          if (!pkg.dependencies["@backstage/plugin-app-backend"]) {
+            pkg.dependencies["@backstage/plugin-app-backend"] = "^0.3.65";
+          }
+        }
+        if (pkg.dependencies) {
+          if (pkg.dependencies["@backstage/plugin-permission-backend"] === "^0.8.2") pkg.dependencies["@backstage/plugin-permission-backend"] = "^0.5.0";
+          delete pkg.dependencies["app-config"];
+          delete pkg.dependencies["winston-audit"];
+          delete pkg.dependencies["@backstage/plugin-ldap-auth-backend"];
+          delete pkg.dependencies["@backstage/plugin-microsoft-auth-backend"];
+          delete pkg.dependencies["@k-phoen/backstage-plugin-grafana"];
+          delete pkg.dependencies["@parsable/backstage-plugin-logstream"];
+          delete pkg.dependencies["@roadiehq/backstage-plugin-ai-assistant-rag"];
+          delete pkg.dependencies["@suxess-it/backstage-plugin-k8sgpt"];
+          delete pkg.dependencies["kubernetes-client"];
+        }
+        fs.writeFileSync(f, JSON.stringify(pkg, null, 2));
+      } catch (e) { console.error("Failed to fix " + f, e); }
+    }
+  });
+'
+
+# Fix Yarn PnP ghost dependencies
+log "Configuring Yarn package extensions..."
+yarn config set 'packageExtensions["@backstage/backend-plugin-api@*"].peerDependencies["@backstage/plugin-scaffolder-backend"]' "*"
+yarn config set 'packageExtensions["@backstage/backend-plugin-api@*"].peerDependenciesMeta["@backstage/plugin-scaffolder-backend"].optional' true
+
+YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install
 success "Dependencies installed"
 
 # ==========================================
 # 3. Create Required Directories
 # ==========================================
 log "Creating required directories..."
-mkdir -p .zitadel-creds
 mkdir -p catalog/{teams,systems,components}
 mkdir -p docs/{architecture,runbooks}
 mkdir -p tests/{e2e,load,unit}
@@ -86,10 +137,6 @@ if [ ! -f ".env" ]; then
 # User ID for Docker containers (prevents permission issues)
 UID=1000
 GID=1000
-
-# ZITADEL credentials (will be populated after first run)
-ZITADEL_CLIENT_ID=local-backstage-dev
-ZITADEL_CLIENT_SECRET=dev-secret-123
 
 # Database
 POSTGRES_USER=postgres
@@ -130,71 +177,25 @@ log "Starting PostgreSQL..."
 docker compose up -d postgres
 
 log "Waiting for PostgreSQL to be ready..."
-for i in {1..30}; do
-    if docker compose exec -T postgres pg_isready -U postgres &> /dev/null; then
-        success "PostgreSQL is ready"
-        break
-    fi
-    sleep 2
-    if [ $i -eq 30 ]; then
-        error "PostgreSQL failed to start after 60 seconds"
-    fi
-done
+#for i in {1..30}; do
+#    if docker compose exec -T postgres pg_isready -U postgres &> /dev/null; then
+#        success "PostgreSQL is ready"
+#        break
+#    fi
+#    sleep 2
+#    if [ $i -eq 30 ]; then
+#        error "PostgreSQL failed to start after 60 seconds"
+#    fi
+#done
 
 # ==========================================
-# 8. Initialize ZITADEL
-# ==========================================
-log "Starting ZITADEL..."
-docker compose up -d zitadel
-
-log "Waiting for ZITADEL to be ready (this may take 30-60 seconds)..."
-for i in {1..60}; do
-    if curl -sf http://localhost:8080/debug/ready &> /dev/null; then
-        success "ZITADEL is ready"
-        break
-    fi
-    sleep 2
-    if [ $i -eq 60 ]; then
-        error "ZITADEL failed to start after 120 seconds"
-    fi
-done
-
-# ==========================================
-# 9. Create ZITADEL OIDC Application
-# ==========================================
-log "Initializing ZITADEL OIDC application..."
-docker compose up zitadel-init
-
-if [ -f ".zitadel-creds" ]; then
-    # Load credentials into .env
-    source .zitadel-creds
-    
-    # Update .env file
-    sed -i.bak "s/^ZITADEL_CLIENT_ID=.*/ZITADEL_CLIENT_ID=$ZITADEL_CLIENT_ID/" .env
-    sed -i.bak "s/^ZITADEL_CLIENT_SECRET=.*/ZITADEL_CLIENT_SECRET=$ZITADEL_CLIENT_SECRET/" .env
-    rm .env.bak
-    
-    success "ZITADEL OIDC application configured"
-    echo ""
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${GREEN}ZITADEL Credentials:${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo "Console:       http://localhost:8080"
-    echo "Username:      zitadel-admin"
-    echo "Password:      SuperSecureDevPass123!"
-    echo "Client ID:     $ZITADEL_CLIENT_ID"
-    echo "Client Secret: $ZITADEL_CLIENT_SECRET"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
-else
-    warn "ZITADEL credentials file not found (manual configuration may be needed)"
-fi
-
-# ==========================================
-# 10. Start Remaining Services
+# 8. Start Remaining Services
 # ==========================================
 log "Starting VictoriaMetrics..."
 docker compose up -d victoriametrics
+
+log "Starting VictoriaLogs..."
+docker compose up -d victorialogs
 
 log "Starting Mock Kubernetes API..."
 docker compose up -d mock-k8s
@@ -203,14 +204,14 @@ docker compose up -d mock-k8s
 sleep 5
 
 # ==========================================
-# 11. Verify Service Health
+# 9. Verify Service Health
 # ==========================================
 log "Verifying service health..."
 
 services=(
     "postgres:5432"
-    "zitadel:8080/debug/ready"
     "victoriametrics:8428/health"
+    "victorialogs:9428/health"
     "mock-k8s:8081/healthz"
 )
 
@@ -238,7 +239,7 @@ for service in "${services[@]}"; do
 done
 
 # ==========================================
-# 12. Create Sample Catalog Entities
+# 10. Create Sample Catalog Entities
 # ==========================================
 if [ ! -f "catalog/teams/platform-engineers.yaml" ]; then
     log "Creating sample catalog entities..."
@@ -289,7 +290,7 @@ else
 fi
 
 # ==========================================
-# 13. Display Summary
+# 11. Display Summary
 # ==========================================
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════${NC}"
@@ -298,7 +299,6 @@ echo -e "${GREEN}═════════════════════
 echo ""
 echo -e "${CYAN}Services:${NC}"
 echo "  • PostgreSQL:      http://localhost:5432"
-echo "  • ZITADEL:         http://localhost:8080"
 echo "  • VictoriaMetrics: http://localhost:8428"
 echo "  • VictoriaLogs:    http://localhost:9428"
 echo "  • Mock K8s API:    http://localhost:8081"
@@ -309,10 +309,6 @@ echo "     ${YELLOW}make dev${NC}"
 echo ""
 echo "  2. Open Backstage UI:"
 echo "     ${YELLOW}http://localhost:3000${NC}"
-echo ""
-echo "  3. Login with ZITADEL:"
-echo "     Username: ${YELLOW}zitadel-admin${NC}"
-echo "     Password: ${YELLOW}SuperSecureDevPass123!${NC}"
 echo ""
 echo -e "${CYAN}Useful Commands:${NC}"
 echo "  make help          - Show all available commands"

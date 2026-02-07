@@ -12,7 +12,7 @@ backend.add(import('@backstage/plugin-permission-backend/alpha'));
 
 // Authentication
 backend.add(import('@backstage/plugin-auth-backend'));
-backend.add(import('@backstage/plugin-auth-backend-module-zitadel-provider'));
+// backend.add(import('@backstage/plugin-auth-backend-module-zitadel-provider'));
 
 // Kubernetes
 backend.add(import('@backstage/plugin-kubernetes-backend/alpha'));

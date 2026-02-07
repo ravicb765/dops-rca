@@ -31,7 +31,8 @@ COPY --chown=node:node package.json yarn.lock ./
 COPY --chown=node:node packages/backend/package.json ./packages/backend/
 
 # Install dependencies (skipping if node_modules exists via volume)
-RUN yarn install --frozen-lockfile
+RUN yarn set version 4.4.1 &&\
+    yarn install --frozen-lockfile
 
 # The rest of the source will be mounted via volumes in docker-compose
 # But we provide the entrypoint

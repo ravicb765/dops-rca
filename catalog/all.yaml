@@ -1,0 +1,9 @@
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: example-catalog
+  description: Sample catalog entities
+spec:
+  targets:
+    - ./teams/platform-engineers.yaml
+    - ./teams/team-a.yaml

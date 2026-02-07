@@ -1,0 +1,21 @@
+FROM node:18-bookworm-slim
+
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libsqlite3-dev python3 build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+# Enable Corepack to support Yarn 4.x defined in package.json
+RUN corepack enable
+
+USER node
+WORKDIR /app
+
+# Copy package files with correct ownership
+COPY --chown=node:node package.json yarn.lock ./
+COPY --chown=node:node packages packages
+
+# Install dependencies
+RUN yarn install
+
+CMD ["yarn", "workspace", "backend", "start"]
