@@ -63,8 +63,10 @@ services:
       # Logging
       - "-loggerFormat=json"
       - "-loggerLevel=INFO"
+      - "--promscrape.config=/etc/prometheus/prometheus.yml"
     volumes:
       - victoriametrics-data:/storage
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
     healthcheck:
       test: ["CMD", "wget", "-q", "-O-", "http://localhost:8428/health"]
       interval: 10s
@@ -74,6 +76,21 @@ services:
     <<: *logging
     networks:
       - backstage-network
+
+  vector:
+    image: docker.io/timberio/vector:0.46.X-distroless-libc
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      - type: bind
+        source: /var/lib/docker
+        target: /var/lib/docker
+      - ./vector-vl-single.yml:/etc/vector/vector.yaml:ro
+    depends_on: [victorialogs]
+    ports:
+      - "8686:8686"
+    user: root
 
   # ==========================================
   # VictoriaLogs - Log Management
@@ -153,12 +170,18 @@ services:
       # Backstage URLs
       APP_CONFIG_app_baseUrl: http://localhost:3000
       APP_CONFIG_backend_baseUrl: http://localhost:7007
+
+      # Authentication - Development Mode
+      APP_CONFIG_auth_environment: development
+
+      # Guest provider (development only)
+      APP_CONFIG_auth_providers_guest_dangerouslyAllowSignInWithoutUserInCatalog: true
       
       # Kubernetes plugin
       APP_CONFIG_kubernetes_serviceLocatorMethod_type: multiTenant
       APP_CONFIG_kubernetes_clusterLocatorMethods_0_type: config
       APP_CONFIG_kubernetes_clusterLocatorMethods_0_clusters_0_name: local-mock
-      APP_CONFIG_kubernetes_clusterLocatorMethods_0_clusters_0_url: http://mock-k8s:8080
+      APP_CONFIG_kubernetes_clusterLocatorMethods_0_clusters_0_url: http://mock-k8s:8081
       APP_CONFIG_kubernetes_clusterLocatorMethods_0_clusters_0_authProvider: serviceAccount
       APP_CONFIG_kubernetes_clusterLocatorMethods_0_clusters_0_skipTLSVerify: true
       
@@ -222,6 +245,6 @@ volumes:
 networks:
   backstage-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.0.0/16
+#    ipam:
+#      config:
+#        - subnet: 172.28.0.0/16

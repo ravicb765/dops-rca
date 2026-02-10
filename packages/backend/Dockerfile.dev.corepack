@@ -1,4 +1,4 @@
-FROM node:18-bookworm-slim
+FROM node:20-bookworm-slim
 
 # Install dependencies
 RUN apt-get update && \
@@ -16,6 +16,7 @@ COPY --chown=node:node package.json yarn.lock ./
 COPY --chown=node:node packages packages
 
 # Install dependencies
-RUN yarn install
+RUN yarn set version 4.4.1 && \
+    yarn install
 
 CMD ["yarn", "workspace", "backend", "start"]

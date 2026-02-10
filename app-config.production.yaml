@@ -24,13 +24,13 @@ organization:
   name: gitops-rca
 
 backend:
-  baseUrl: https://backstage.yourcompany.com
+  baseUrl: https://localhost:7007
   listen:
     port: 7007
     host: 0.0.0.0
   
   cors:
-    origin: https://backstage.yourcompany.com
+    origin: https://localhost:3000
     methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
     credentials: true
   
@@ -79,25 +79,8 @@ auth:
     secret: ${SESSION_SECRET}
   
   providers:
-    # Primary: ZITADEL OIDC
-    zitadel:
-      production:
-        clientId: ${ZITADEL_CLIENT_ID}
-        clientSecret: ${ZITADEL_CLIENT_SECRET}
-        metadataUrl: ${ZITADEL_ISSUER}/.well-known/openid-configuration
-        callbackUrl: https://backstage.yourcompany.com/api/auth/zitadel/handler/frame
-        scope: 'openid profile email'
-        prompt: auto
-        
-        # Group synchronization config
-        roleClaimPath: "urn:zitadel:iam:org:project:roles"
-        teamPrefix: "team-"
-        groupDomain: "default"
-        enableDebugLogging: false
-        
-        signIn:
-          resolvers:
-            - resolver: zitadelGroupSyncResolver
+    guest:
+      dangerouslyAllowSignInWithoutUserInCatalog: true
     
     # Fallback: SAML for corporate IdP
     saml:
@@ -118,6 +101,24 @@ auth:
         signIn:
           resolvers:
             - resolver: emailMatchingUserEntityProfileEmail
+    # LDAP provider (for Active Directory)
+    ldap:
+      development:
+        host: ${LDAP_HOST:-ldap.example.com}
+        port: ${LDAP_PORT:-636}
+        useLDAPS: true
+        bindDn: ${LDAP_BIND_DN}
+        bindSecret: ${LDAP_BIND_SECRET}
+        searchBase: ${LDAP_SEARCH_BASE:-ou=users,dc=example,dc=com}
+        searchFilter: ${LDAP_SEARCH_FILTER:-(uid={{username}})}
+
+        # Group membership
+        groupSearchBase: ${LDAP_GROUP_SEARCH_BASE:-ou=groups,dc=example,dc=com}
+        groupSearchFilter: ${LDAP_GROUP_SEARCH_FILTER:-(member={{dn}})}
+
+        signIn:
+          resolvers:
+            - resolver: ldapDnResolver
     
     # Azure AD (optional)
     microsoft:
